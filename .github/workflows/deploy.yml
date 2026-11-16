@@ -1,0 +1,98 @@
+name: Full Stack Application Deployment Test
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  COMPOSE_PROJECT_NAME: myapp
+
+jobs:
+  deploy-and-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secrets
+        run: |
+          echo "Creating .env file from GitHub Secrets..."
+          $envContent = @"
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          APP_PORT=${{ secrets.APP_PORT }}
+          APP_SECRET=${{ secrets.APP_SECRET }}
+          API_KEY=${{ secrets.API_KEY }}
+          COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
+          "@
+          Set-Content -Path .env -Value $envContent
+          echo ".env file created successfully"
+          echo "Contents (masked):"
+          Get-Content .env | ForEach-Object { $_ -replace '=.*', '=***' }
+
+      - name: Deploy with Docker Compose
+        run: |
+          echo "Starting application stack..."
+          docker-compose up -d 
+          echo "Waiting for services to start..."
+          Start-Sleep -Seconds 30
+
+      - name: Verify containers are running
+        run: |
+          docker-compose ps
+          $psOutput = docker-compose ps
+          if ($psOutput -match "Up") {
+            echo "✓ All containers are running"
+          } else {
+            echo "✗ Some containers failed to start"
+            docker-compose logs
+            exit 1
+          }
+
+      - name: Run application tests
+        run: |
+          echo "✓ Running application tests..."
+          
+          # ТЕСТ 1: Проверка работы приложения (эндпоинт /health)
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing -ErrorAction Stop
+            echo "✓ Web application is healthy"
+          } catch {
+            echo "✗ Web application health check failed"
+            exit 1
+          }
+
+          # ТЕСТ 2: Сравнение данных БД и API (эндпоинт /api/items/count)
+          $dbCountStr = docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;"
+          $dbCount = $dbCountStr.Trim()
+          
+          try {
+            $webCountResponse = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -Method Get -ErrorAction Stop
+            $webCount = $webCountResponse.ToString().Trim()
+          } catch {
+            echo "✗ Failed to get web API count"
+            exit 1
+          }
+          
+          echo "Database count: $dbCount"
+          echo "Web API count: $webCount"
+          
+          if ($dbCount -eq $webCount) {
+            echo "✓ Data consistency test passed"
+          } else {
+            echo "✗ Data consistency test failed"
+            exit 1
+          }
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-logs-and-env
+          path: .env
+          retention-days: 7
