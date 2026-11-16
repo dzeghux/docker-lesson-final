@@ -38,19 +38,19 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           echo "Starting application stack..."
-          docker-compose up -d 
+          docker compose up -d 
           echo "Waiting for services to start..."
           Start-Sleep -Seconds 30
 
       - name: Verify containers are running
         run: |
-          docker-compose ps
-          $psOutput = docker-compose ps
+          docker compose ps
+          $psOutput = docker compose ps
           if ($psOutput -match "Up") {
             echo "✓ All containers are running"
           } else {
             echo "✗ Some containers failed to start"
-            docker-compose logs
+            docker compose logs
             exit 1
           }
 
@@ -68,7 +68,7 @@ jobs:
           }
 
           # ТЕСТ 2: Сравнение данных БД и API (эндпоинт /api/items/count)
-          $dbCountStr = docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;"
+          $dbCountStr = docker compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;"
           $dbCount = $dbCountStr.Trim()
           
           try {
