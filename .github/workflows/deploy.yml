@@ -10,7 +10,7 @@ env:
 
 jobs:
   deploy-and-test:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest  # <--- ЗАПУСКАЕМ НА СЕРВЕРЕ GITHUB (LINUX)
 
     steps:
       - name: Checkout code
@@ -19,7 +19,7 @@ jobs:
       - name: Create .env file from secrets
         run: |
           echo "Creating .env file from GitHub Secrets..."
-          $envContent = @"
+          cat > .env << EOF
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT }}
           DB_NAME=${{ secrets.DB_NAME }}
@@ -29,65 +29,51 @@ jobs:
           APP_SECRET=${{ secrets.APP_SECRET }}
           API_KEY=${{ secrets.API_KEY }}
           COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
-          "@
-          Set-Content -Path .env -Value $envContent
-          echo ".env file created successfully"
+          EOF
           echo "Contents (masked):"
-          Get-Content .env | ForEach-Object { $_ -replace '=.*', '=***' }
+          cat .env | sed 's/=.*/=***/'
 
       - name: Deploy with Docker Compose
         run: |
           echo "Starting application stack..."
-          & "C:\Users\Aleksandra\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe" compose up -d 
+          docker compose up -d 
           echo "Waiting for services to start..."
-          Start-Sleep -Seconds 30
+          sleep 15
 
       - name: Verify containers are running
         run: |
-          & "C:\Users\Aleksandra\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe" compose ps
-          $psOutput = docker compose ps
-          if ($psOutput -match "Up") {
+          docker compose ps
+          if docker compose ps | grep -q "Up"; then
             echo "✓ All containers are running"
-          } else {
+          else
             echo "✗ Some containers failed to start"
             docker compose logs
             exit 1
-          }
+          fi
 
       - name: Run application tests
         run: |
           echo "✓ Running application tests..."
           
-          # ТЕСТ 1: Проверка работы приложения (эндпоинт /health)
-          try {
-            $response = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing -ErrorAction Stop
+          if curl -f http://localhost:${{ secrets.APP_PORT }}/health; then
             echo "✓ Web application is healthy"
-          } catch {
+          else
             echo "✗ Web application health check failed"
             exit 1
-          }
+          fi
 
-          # ТЕСТ 2: Сравнение данных БД и API (эндпоинт /api/items/count)
-          $dbCountStr = & "C:\Users\Aleksandra\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe" compose exec c -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;"
-          $dbCount = $dbCountStr.Trim()
+          DB_COUNT=$(docker compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | tr -d ' \n\r' || echo "0")
+          WEB_COUNT=$(curl -s http://localhost:${{ secrets.APP_PORT }}/api/items/count | tr -d ' \n\r')
           
-          try {
-            $webCountResponse = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -Method Get -ErrorAction Stop
-            $webCount = $webCountResponse.ToString().Trim()
-          } catch {
-            echo "✗ Failed to get web API count"
-            exit 1
-          }
+          echo "Database count: $DB_COUNT"
+          echo "Web API count: $WEB_COUNT"
           
-          echo "Database count: $dbCount"
-          echo "Web API count: $webCount"
-          
-          if ($dbCount -eq $webCount) {
+          if [ "$DB_COUNT" = "$WEB_COUNT" ]; then
             echo "✓ Data consistency test passed"
-          } else {
+          else
             echo "✗ Data consistency test failed"
             exit 1
-          }
+          fi
 
       - name: Upload artifacts
         if: always()
