@@ -53,29 +53,29 @@ jobs:
 
       - name: Run application tests
         run: |
-          echo "✓ Running application tests..."
+          echo "=== DIAGNOSTICS START ==="
+          echo "1. Checking running containers and ports:"
+          docker compose ps
           
-          # Даем приложению время окончательно проснуться
-          sleep 10 
+          echo "2. Checking application logs (app/backend):"
+          docker compose logs 
+          
+          echo "=== DIAGNOSTICS END ==="
+          
+          echo "Waiting for app to be fully ready..."
+          sleep 10
 
-          # ТЕСТ 1: Проверка работы приложения (порт 9090)
-          echo "1. Testing application connectivity..."
-          if curl -f http://localhost:${{ secrets.APP_PORT }}/health; then
+          echo "Testing connection on port ${{ secrets.APP_PORT }}..."
+          if curl -v http://localhost:${{ secrets.APP_PORT }}/health; then
             echo "✓ Web application is healthy"
           else
             echo "✗ Web application health check failed"
-            echo "--- CONTAINER LOGS ---"
-            docker compose logs
             exit 1
           fi
 
-          # ТЕСТ 2: Сравнение данных БД и API
+          # ТЕСТ 2: Сравнение данных (если первый тест прошел)
           echo "2. Testing data consistency..."
-          
-          # Получаем данные напрямую из БД (если сервис БД называется не 'db', поменяйте это слово)
           DB_COUNT=$(docker compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | tr -d ' \n\r' || echo "0")
-          
-          # Получаем данные через веб-API
           WEB_COUNT=$(curl -s http://localhost:${{ secrets.APP_PORT }}/api/items/count | tr -d ' \n\r')
           
           echo "Database count: $DB_COUNT"
@@ -85,8 +85,6 @@ jobs:
             echo "✓ Data consistency test passed"
           else
             echo "✗ Data consistency test failed"
-            echo "--- CONTAINER LOGS ---"
-            docker compose logs
             exit 1
           fi
 
